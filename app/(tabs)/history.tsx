@@ -1,13 +1,23 @@
 import { Ionicons } from "@expo/vector-icons";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { collection, onSnapshot, query, where } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import {
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -42,6 +52,27 @@ const statusConfig: Record<
 };
 
 // 🔹 Utility to safely format Firestore Timestamps or strings
+const CANCELLATION_REASONS = [
+  {
+    id: "plans_changed",
+    label: "My plans have changed",
+    icon: "calendar-outline",
+  },
+  { id: "financial", label: "Financial reasons", icon: "cash-outline" },
+  {
+    id: "emergency",
+    label: "Health / family emergency",
+    icon: "heart-outline",
+  },
+  {
+    id: "better_option",
+    label: "Found a better alternative",
+    icon: "bulb-outline",
+  },
+  { id: "quality", label: "Service quality concerns", icon: "star-outline" },
+  { id: "other", label: "Other reason", icon: "chatbubbles-outline" },
+];
+
 const formatDate = (date: any) => {
   if (!date) return "";
   if (date.toDate) {
@@ -58,6 +89,21 @@ export default function TravelHistory() {
   const [trips, setTrips] = useState<TravelRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState<TravelRecord | null>(null);
+  const [cancelMode, setCancelMode] = useState(false);
+  const [selectedReason, setSelectedReason] = useState<string | null>(null);
+  const [otherDetails, setOtherDetails] = useState("");
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelSuccess, setCancelSuccess] = useState(false);
+
+  function resetCancelState() {
+    setCancelMode(false);
+    setSelectedReason(null);
+    setOtherDetails("");
+    setCancelError(null);
+    setCancelLoading(false);
+    setCancelSuccess(false);
+  }
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
@@ -132,6 +178,59 @@ export default function TravelHistory() {
     return s === filter;
   });
 
+  const handleCancelTrip = async (trip: TravelRecord) => {
+    setCancelMode(true);
+    setCancelError(null);
+    setCancelSuccess(false);
+  };
+
+  const submitCancellation = async (trip: TravelRecord) => {
+    if (!selectedReason) {
+      setCancelError("Please select a reason for cancellation.");
+      return;
+    }
+
+    if (selectedReason === "other" && !otherDetails.trim()) {
+      setCancelError("Please provide details for your cancellation.");
+      return;
+    }
+
+    setCancelLoading(true);
+    try {
+      const collectionName =
+        trip.type === "itinerary"
+          ? "itineraryBookings"
+          : trip.type === "promo"
+            ? "promoBookings"
+            : "bookings";
+
+      const bookingRef = doc(
+        db,
+        collectionName,
+        trip.id.split(":").pop() || trip.id,
+      );
+
+      const reasonLabel =
+        CANCELLATION_REASONS.find((r) => r.id === selectedReason)?.label ||
+        "Other";
+
+      await updateDoc(bookingRef, {
+        status: "cancelled",
+        cancellationReason: reasonLabel,
+        cancellationDetails: otherDetails.trim() || null,
+        cancelledAt: new Date(),
+      });
+
+      setCancelSuccess(true);
+      setCancelError(null);
+      setCancelLoading(false);
+    } catch (error) {
+      setCancelError("Failed to cancel booking. Please try again.");
+      setCancelLoading(false);
+      console.error("Failed to cancel booking:", error);
+    }
+  };
+
   const renderCard = (trip: TravelRecord) => {
     const s = (trip.status || "").toLowerCase();
     const badge = statusConfig[s] || {
@@ -141,12 +240,11 @@ export default function TravelHistory() {
     };
 
     return (
-      <TouchableOpacity
-        key={trip.id}
-        onPress={() => setSelectedTrip(trip)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.cardWrapper}>
+      <View key={trip.id} style={styles.cardWrapper}>
+        <TouchableOpacity
+          onPress={() => setSelectedTrip(trip)}
+          activeOpacity={0.7}
+        >
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <View style={{ flex: 1 }}>
@@ -195,8 +293,10 @@ export default function TravelHistory() {
               </View>
             </View>
           </View>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+
+        {/* Cancel action moved inside modal - external button removed */}
+      </View>
     );
   };
 
@@ -253,10 +353,18 @@ export default function TravelHistory() {
 
       {/* Booking Detail Modal */}
       <Modal visible={!!selectedTrip} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={30}
+        >
           <View style={styles.modalBox}>
             {selectedTrip && (
-              <ScrollView showsVerticalScrollIndicator={false}>
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 40 }}
+              >
                 {/* Modal Header */}
                 <View style={styles.modalHeader}>
                   <View>
@@ -272,133 +380,287 @@ export default function TravelHistory() {
                     </Text>
                   </View>
                   <TouchableOpacity
-                    onPress={() => setSelectedTrip(null)}
+                    onPress={() => {
+                      setSelectedTrip(null);
+                      resetCancelState();
+                    }}
                     style={styles.modalCloseBtn}
                   >
                     <Ionicons name="close" size={24} color="#111" />
                   </TouchableOpacity>
                 </View>
 
-                {/* Traveler Info Section */}
-                <View style={styles.modalSection}>
-                  <Text style={styles.sectionTitle}>Traveler Information</Text>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Name</Text>
-                    <Text style={styles.infoValue}>
-                      {selectedTrip.fullName}
+                {cancelSuccess ? (
+                  <View style={styles.cancelSuccessBox}>
+                    <Text style={styles.cancelSuccessTitle}>
+                      Booking cancelled successfully
+                    </Text>
+                    <Text style={styles.cancelSuccessText}>
+                      Your booking has been cancelled and moved to the cancelled
+                      history tab.
                     </Text>
                   </View>
-                  {selectedTrip.email && (
-                    <View style={styles.infoRow}>
-                      <Text style={styles.infoLabel}>Email</Text>
-                      <Text style={styles.infoValue}>{selectedTrip.email}</Text>
-                    </View>
-                  )}
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Location</Text>
-                    <Text style={styles.infoValue}>
-                      {selectedTrip.location || "Philippines"}
+                ) : cancelMode ? (
+                  <View style={styles.cancelSection}>
+                    <Text style={styles.cancelTitle}>
+                      Why are you cancelling?
                     </Text>
-                  </View>
-                </View>
+                    <Text style={styles.cancelSubtitle}>
+                      Please select a reason so we can improve our service.
+                    </Text>
 
-                {/* Booking Info Section */}
-                <View style={styles.modalSection}>
-                  <Text style={styles.sectionTitle}>Booking Information</Text>
-                  {selectedTrip.departureDate && (
-                    <View style={styles.infoRow}>
-                      <Text style={styles.infoLabel}>Departure Date</Text>
-                      <Text style={styles.infoValue}>
-                        {formatDate(selectedTrip.departureDate)}
-                      </Text>
-                    </View>
-                  )}
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Travelers</Text>
-                    <Text style={styles.infoValue}>
-                      {selectedTrip.people ?? 1}
-                    </Text>
-                  </View>
-                  {selectedTrip.specialRequests && (
-                    <View style={styles.infoRow}>
-                      <Text style={styles.infoLabel}>Special Requests</Text>
-                      <Text style={styles.infoValue}>
-                        {selectedTrip.specialRequests}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Payment Info Section */}
-                <View style={styles.modalSection}>
-                  <Text style={styles.sectionTitle}>Payment Information</Text>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Total Price</Text>
-                    <Text style={styles.priceValue}>
-                      ₱{selectedTrip.totalPrice?.toLocaleString() ?? 0}
-                    </Text>
-                  </View>
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Status</Text>
-                    <View
-                      style={[
-                        styles.statusBadgeSmall,
-                        {
-                          backgroundColor:
-                            statusConfig[
-                              (selectedTrip.status || "").toLowerCase()
-                            ]?.bg || "#E5E7EB",
-                        },
-                      ]}
-                    >
-                      <Text
+                    {CANCELLATION_REASONS.map((reason) => (
+                      <TouchableOpacity
+                        key={reason.id}
+                        onPress={() => {
+                          setSelectedReason(reason.id);
+                          setCancelError(null);
+                        }}
                         style={[
-                          styles.statusBadgeText,
-                          {
-                            color:
-                              statusConfig[
-                                (selectedTrip.status || "").toLowerCase()
-                              ]?.color || "#6B7280",
-                          },
+                          styles.reasonButton,
+                          selectedReason === reason.id &&
+                            styles.reasonButtonActive,
                         ]}
                       >
-                        {selectedTrip.status.replace("_", " ")}
-                      </Text>
+                        <View
+                          style={[
+                            styles.reasonIcon,
+                            selectedReason === reason.id &&
+                              styles.reasonIconActive,
+                          ]}
+                        >
+                          <Ionicons
+                            name={reason.icon as any}
+                            size={18}
+                            color={
+                              selectedReason === reason.id
+                                ? "#B91C1C"
+                                : "#6B7280"
+                            }
+                          />
+                        </View>
+                        <Text
+                          style={
+                            selectedReason === reason.id
+                              ? styles.reasonTextActive
+                              : styles.reasonText
+                          }
+                        >
+                          {reason.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+
+                    {selectedReason === "other" && (
+                      <View style={styles.otherDetailsBox}>
+                        <Text style={styles.otherDetailsLabel}>
+                          Additional details
+                        </Text>
+                        <TextInput
+                          style={styles.otherDetailsInput}
+                          placeholder="Tell us more..."
+                          value={otherDetails}
+                          onChangeText={setOtherDetails}
+                          multiline
+                          numberOfLines={4}
+                        />
+                      </View>
+                    )}
+
+                    {cancelError ? (
+                      <Text style={styles.cancelError}>{cancelError}</Text>
+                    ) : null}
+
+                    <View style={styles.cancelButtonsRow}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setCancelMode(false);
+                          setSelectedReason(null);
+                          setOtherDetails("");
+                          setCancelError(null);
+                        }}
+                        style={[
+                          styles.modalFooterBtn,
+                          styles.closeBtn,
+                          { marginRight: 12 },
+                        ]}
+                      >
+                        <Text style={styles.closeBtnText}>Keep Booking</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => submitCancellation(selectedTrip)}
+                        disabled={cancelLoading || !selectedReason}
+                        style={[
+                          styles.modalFooterBtn,
+                          styles.cancelModalBtn,
+                          (!selectedReason || cancelLoading) &&
+                            styles.cancelModalBtnDisabled,
+                        ]}
+                      >
+                        <Text
+                          style={[styles.cancelModalText, { marginLeft: 0 }]}
+                        >
+                          Confirm Cancellation
+                        </Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
-                  {selectedTrip.createdAt && (
-                    <View style={styles.infoRow}>
-                      <Text style={styles.infoLabel}>Booked Date</Text>
-                      <Text style={styles.infoValue}>
-                        {formatDate(selectedTrip.createdAt)}
+                ) : (
+                  <View>
+                    {/* Traveler Info Section */}
+                    <View style={styles.modalSection}>
+                      <Text style={styles.sectionTitle}>
+                        Traveler Information
                       </Text>
+                      <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Name</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTrip.fullName}
+                        </Text>
+                      </View>
+                      {selectedTrip.email && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Email</Text>
+                          <Text style={styles.infoValue}>
+                            {selectedTrip.email}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Location</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTrip.location || "Philippines"}
+                        </Text>
+                      </View>
                     </View>
-                  )}
-                </View>
 
-                {/* Receipt */}
-                {selectedTrip.proofUrl && (
-                  <View style={styles.modalSection}>
-                    <Text style={styles.sectionTitle}>Payment Receipt</Text>
-                    <Image
-                      source={{ uri: selectedTrip.proofUrl }}
-                      style={styles.receiptImage}
-                      resizeMode="cover"
-                    />
+                    {/* Booking Info Section */}
+                    <View style={styles.modalSection}>
+                      <Text style={styles.sectionTitle}>
+                        Booking Information
+                      </Text>
+                      {selectedTrip.departureDate && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Departure Date</Text>
+                          <Text style={styles.infoValue}>
+                            {formatDate(selectedTrip.departureDate)}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Travelers</Text>
+                        <Text style={styles.infoValue}>
+                          {selectedTrip.people ?? 1}
+                        </Text>
+                      </View>
+                      {selectedTrip.specialRequests && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Special Requests</Text>
+                          <Text style={styles.infoValue}>
+                            {selectedTrip.specialRequests}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Payment Info Section */}
+                    <View style={styles.modalSection}>
+                      <Text style={styles.sectionTitle}>
+                        Payment Information
+                      </Text>
+                      <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Total Price</Text>
+                        <Text style={styles.priceValue}>
+                          ₱{selectedTrip.totalPrice?.toLocaleString() ?? 0}
+                        </Text>
+                      </View>
+                      <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Status</Text>
+                        <View
+                          style={[
+                            styles.statusBadgeSmall,
+                            {
+                              backgroundColor:
+                                statusConfig[
+                                  (selectedTrip.status || "").toLowerCase()
+                                ]?.bg || "#E5E7EB",
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.statusBadgeText,
+                              {
+                                color:
+                                  statusConfig[
+                                    (selectedTrip.status || "").toLowerCase()
+                                  ]?.color || "#6B7280",
+                              },
+                            ]}
+                          >
+                            {selectedTrip.status.replace("_", " ")}
+                          </Text>
+                        </View>
+                      </View>
+                      {selectedTrip.createdAt && (
+                        <View style={styles.infoRow}>
+                          <Text style={styles.infoLabel}>Booked Date</Text>
+                          <Text style={styles.infoValue}>
+                            {formatDate(selectedTrip.createdAt)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* Receipt */}
+                    {selectedTrip.proofUrl && (
+                      <View style={styles.modalSection}>
+                        <Text style={styles.sectionTitle}>Payment Receipt</Text>
+                        <Image
+                          source={{ uri: selectedTrip.proofUrl }}
+                          style={styles.receiptImage}
+                          resizeMode="cover"
+                        />
+                      </View>
+                    )}
+
+                    {/* Footer Buttons */}
+                    <View style={styles.modalFooterRow}>
+                      <TouchableOpacity
+                        onPress={() => setSelectedTrip(null)}
+                        style={[
+                          styles.modalFooterBtn,
+                          styles.closeBtn,
+                          { marginRight: 12 },
+                        ]}
+                      >
+                        <Text style={styles.closeBtnText}>Close</Text>
+                      </TouchableOpacity>
+
+                      {isUpcomingish(
+                        (selectedTrip.status || "").toLowerCase(),
+                      ) && (
+                        <TouchableOpacity
+                          onPress={() => handleCancelTrip(selectedTrip)}
+                          style={[styles.modalFooterBtn, styles.cancelModalBtn]}
+                        >
+                          <Ionicons
+                            name="trash-outline"
+                            size={16}
+                            color="#B91C1C"
+                          />
+                          <Text style={styles.cancelModalText}>
+                            Cancel Trip
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
                 )}
-
-                {/* Close Button */}
-                <TouchableOpacity
-                  onPress={() => setSelectedTrip(null)}
-                  style={styles.closeBtn}
-                >
-                  <Text style={styles.closeBtnText}>Close</Text>
-                </TouchableOpacity>
               </ScrollView>
             )}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -498,6 +760,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#E5E7EB",
     marginBottom: 16,
   },
+
+  /* external cancel styles removed; modal cancel button remains */
 
   // Card Details
   cardDetails: {
@@ -674,5 +938,134 @@ const styles = StyleSheet.create({
     color: "white",
     fontWeight: "700",
     fontSize: 16,
+  },
+  modalFooterRow: {
+    flexDirection: "row",
+    marginTop: 12,
+  },
+  modalFooterBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  cancelModalBtn: {
+    backgroundColor: "#FEF2F2",
+  },
+  cancelModalBtnDisabled: {
+    opacity: 0.5,
+  },
+  cancelModalText: {
+    color: "#B91C1C",
+    fontWeight: "700",
+    marginLeft: 6,
+  },
+  cancelSuccessBox: {
+    backgroundColor: "#ECFDF5",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+  },
+  cancelSuccessTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#047857",
+    marginBottom: 8,
+  },
+  cancelSuccessText: {
+    fontSize: 14,
+    color: "#065F46",
+    lineHeight: 20,
+  },
+  cancelSection: {
+    marginBottom: 24,
+  },
+  cancelTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  cancelSubtitle: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginBottom: 18,
+  },
+  reasonButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  reasonButtonActive: {
+    backgroundColor: "#FEE2E2",
+    borderColor: "#FECACA",
+  },
+  reasonIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reasonIconActive: {
+    backgroundColor: "#FECACA",
+  },
+  reasonText: {
+    color: "#111827",
+    fontSize: 15,
+    fontWeight: "600",
+    flex: 1,
+  },
+  reasonTextActive: {
+    color: "#991B1B",
+    fontSize: 15,
+    fontWeight: "700",
+    flex: 1,
+  },
+  otherDetailsBox: {
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  otherDetailsLabel: {
+    fontSize: 14,
+    color: "#6B7280",
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  otherDetailsInput: {
+    minHeight: 110,
+    borderRadius: 16,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    padding: 14,
+    textAlignVertical: "top",
+    color: "#111827",
+  },
+  cancelButtonsRow: {
+    flexDirection: "row",
+    marginTop: 20,
+  },
+  keepBtn: {
+    backgroundColor: "#2563EB",
+  },
+  keepBtnText: {
+    color: "white",
+    fontWeight: "700",
+  },
+  cancelError: {
+    color: "#B91C1C",
+    marginTop: 10,
+    fontSize: 14,
+    fontWeight: "600",
   },
 });
