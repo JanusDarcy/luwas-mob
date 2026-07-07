@@ -1,25 +1,25 @@
 // app/(promos)/[id]/book.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { getAuth } from "firebase/auth";
+import { getAuth, onAuthStateChanged, User } from "firebase/auth";
 import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  serverTimestamp,
+    addDoc,
+    collection,
+    doc,
+    getDoc,
+    serverTimestamp,
 } from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  ImageBackground,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    ImageBackground,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { db } from "../../../src/lib/firebase";
@@ -36,7 +36,7 @@ export default function PromoBookingForm() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const auth = getAuth();
-  const user = auth.currentUser;
+  const [user, setUser] = useState<User | null>(null);
 
   const [promo, setPromo] = useState<Promo | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,16 +58,21 @@ export default function PromoBookingForm() {
 
   const [showSpecialRequests, setShowSpecialRequests] = useState(false);
 
-  // Prefill user info
   useEffect(() => {
-    if (user) {
-      setFormData((prev) => ({
-        ...prev,
-        fullName: user.displayName || "",
-        email: user.email || "",
-      }));
-    }
-  }, [user]);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+
+      if (currentUser) {
+        setFormData((prev) => ({
+          ...prev,
+          fullName: prev.fullName || currentUser.displayName || "",
+          email: prev.email || currentUser.email || "",
+        }));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [auth]);
 
   // Fetch promo details
   useEffect(() => {
@@ -106,55 +111,54 @@ export default function PromoBookingForm() {
     }));
   };
 
-const handleSubmit = async () => {
-  if (!promo) return;
+  const handleSubmit = async () => {
+    if (!promo) return;
 
-  if (!formData.departureDate) {
-    Alert.alert("Error", "Please select a departure date.");
-    return;
-  }
+    if (!formData.departureDate) {
+      Alert.alert("Error", "Please select a departure date.");
+      return;
+    }
 
-  setLoading(true);
+    setLoading(true);
 
-  try {
-    // 💰 Compute prices
-    const price = promo.finalPrice || 0;
-    const totalPrice = formData.travelers * price;
+    try {
+      // 💰 Compute prices
+      const price = promo.finalPrice || 0;
+      const totalPrice = formData.travelers * price;
 
-    // ✅ Unified data (same as web)
-    const bookingData = {
-      ...formData,
-      userId: user?.uid,
-      promoId: id,
-      promoTitle: promo.title,
-      price, // 🔥 include price per traveler
-      totalPrice, // 🔥 include total amount
-      status: "pending_payment",
-      createdAt: serverTimestamp(),
-    };
+      // ✅ Unified data (same as web)
+      const bookingData = {
+        ...formData,
+        userId: user?.uid,
+        promoId: id,
+        promoTitle: promo.title,
+        price, // 🔥 include price per traveler
+        totalPrice, // 🔥 include total amount
+        status: "pending_payment",
+        createdAt: serverTimestamp(),
+      };
 
-    // ✅ Save to Firestore
-    const docRef = await addDoc(collection(db, "promoBookings"), bookingData);
+      // ✅ Save to Firestore
+      const docRef = await addDoc(collection(db, "promoBookings"), bookingData);
 
-    Alert.alert(
-      "Success",
-      `Booking created! Total: ₱${totalPrice.toLocaleString()}\nRedirecting to payment...`
-    );
+      Alert.alert(
+        "Success",
+        `Booking created! Total: ₱${totalPrice.toLocaleString()}\nRedirecting to payment...`,
+      );
 
-    // ✅ Redirect to payment page
-    router.push(
-      `/(promos)/${id}/pay?bookingId=${docRef.id}&title=${encodeURIComponent(
-        promo.title
-      )}&type=promo&amount=${totalPrice}`
-    );
-  } catch (err) {
-    console.error("Booking error:", err);
-    Alert.alert("Error", "Something went wrong while booking.");
-  } finally {
-    setLoading(false);
-  }
-};
-
+      // ✅ Redirect to payment page
+      router.push(
+        `/(promos)/${id}/pay?bookingId=${docRef.id}&title=${encodeURIComponent(
+          promo.title,
+        )}&type=promo&amount=${totalPrice}`,
+      );
+    } catch (err) {
+      console.error("Booking error:", err);
+      Alert.alert("Error", "Something went wrong while booking.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!promo) {
     return (
@@ -183,7 +187,10 @@ const handleSubmit = async () => {
           }}
         >
           <View style={styles.heroOverlay} />
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.back()}
+          >
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
           <View style={styles.heroTextBox}>
@@ -373,7 +380,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   form: { padding: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: "700", color: "#111", marginBottom: 4 },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111",
+    marginBottom: 4,
+  },
   sectionSubtitle: { fontSize: 13, color: "#666", marginBottom: 16 },
   inputWrapper: {
     flexDirection: "row",

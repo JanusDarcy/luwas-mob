@@ -1,19 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { doc, getDoc } from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Animated,
-  Dimensions,
-  ImageBackground,
-  Pressable,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Animated,
+    Dimensions,
+    ImageBackground,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import MapView, { Marker } from "react-native-maps";
 import { db } from "../../../src/lib/firebase";
@@ -86,7 +84,7 @@ export default function DestinationDetails() {
         contentContainerStyle={{ paddingBottom: 100 }}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
+          { useNativeDriver: false },
         )}
       >
         {/* Hero */}
@@ -107,7 +105,11 @@ export default function DestinationDetails() {
                 },
               ]}
             >
-              <BlurView intensity={60} tint="dark" style={StyleSheet.absoluteFill} />
+              <BlurView
+                intensity={60}
+                tint="dark"
+                style={StyleSheet.absoluteFill}
+              />
             </Animated.View>
 
             <View style={styles.topBar}>
@@ -143,6 +145,23 @@ export default function DestinationDetails() {
 
             <Text style={styles.description}>{destination.description}</Text>
 
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => router.push(`/${id}/packages`)}
+              >
+                <Ionicons name="briefcase-outline" size={18} color="#2563EB" />
+                <Text style={styles.actionText}>Packages</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => router.push(`/${id}/customize`)}
+              >
+                <Ionicons name="create-outline" size={18} color="#2563EB" />
+                <Text style={styles.actionText}>Plan Trip</Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Modular components */}
             <TravelerReviews
               name={destination.name}
@@ -150,7 +169,10 @@ export default function DestinationDetails() {
             />
 
             <Text style={styles.sectionTitle}>Nearby Spots</Text>
-            <NearbySpots lat={destination.latitude} lon={destination.longitude} />
+            <NearbySpots
+              lat={destination.latitude}
+              lon={destination.longitude}
+            />
 
             <WeatherInsights
               name={destination.name}
@@ -180,24 +202,6 @@ export default function DestinationDetails() {
           </BlurView>
         </View>
       </Animated.ScrollView>
-
-      {/* Sticky Book Now */}
-      <View style={styles.stickyBtnWrapper}>
-        <Pressable
-          onPress={() => router.push(`/${id}/book`)}
-          style={({ pressed }) => [
-            styles.bookBtn,
-            { transform: [{ scale: pressed ? 0.96 : 1 }] },
-          ]}
-        >
-          <LinearGradient
-            colors={["#2563EB", "#1D4ED8"]}
-            style={styles.gradient}
-          >
-            <Text style={styles.bookText}>Book Now</Text>
-          </LinearGradient>
-        </Pressable>
-      </View>
     </View>
   );
 }
@@ -234,6 +238,18 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: "700", color: "#111" },
   location: { fontSize: 14, color: "#6b7280", marginTop: 2 },
   description: { fontSize: 15, color: "#374151", marginVertical: 12 },
+  actionRow: { flexDirection: "row", gap: 10, marginBottom: 12 },
+  actionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 12,
+  },
+  actionText: { fontSize: 14, fontWeight: "600", color: "#2563EB" },
   price: { fontSize: 20, fontWeight: "700", color: "#2563EB" },
   perPerson: { fontSize: 13, color: "#6b7280" },
   sectionTitle: {
@@ -248,27 +264,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     height: 160,
   },
-  stickyBtnWrapper: {
-    position: "absolute",
-    bottom: 20,
-    left: 20,
-    right: 20,
-  },
-  bookBtn: {
-    borderRadius: 999,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  gradient: {
-    paddingVertical: 16,
-    alignItems: "center",
-    borderRadius: 999,
-  },
-  bookText: { color: "#fff", fontWeight: "700", fontSize: 16 },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
   error: { fontSize: 16, color: "red" },
-  
 });

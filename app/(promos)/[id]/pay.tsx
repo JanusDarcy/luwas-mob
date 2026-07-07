@@ -7,18 +7,18 @@ import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Image,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { db, storage } from "../../../src/lib/firebase";
 
-export default function ItineraryPayPage() {
+export default function PromoPayPage() {
   const { bookingId, title } = useLocalSearchParams<{
     bookingId: string;
     title: string;
@@ -63,15 +63,14 @@ export default function ItineraryPayPage() {
       const response = await fetch(image);
       const blob = await response.blob();
 
-      // Store under `itineraryBookings`
       const proofRef = ref(
         storage,
-        `itineraryProofs/${bookingId}/${Date.now()}.jpg`
+        `promoProofs/${bookingId}/${Date.now()}.jpg`,
       );
       await uploadBytes(proofRef, blob);
       const proofUrl = await getDownloadURL(proofRef);
 
-      const bookingRef = doc(db, "itineraryBookings", bookingId);
+      const bookingRef = doc(db, "promoBookings", bookingId);
       await updateDoc(bookingRef, {
         proofUrl,
         status: "awaiting_approval",
@@ -85,9 +84,9 @@ export default function ItineraryPayPage() {
 
       Alert.alert("✅ Success", "Payment proof submitted!");
       router.push(
-        `/booking-success?type=itinerary&title=${encodeURIComponent(
-          title || "Itinerary"
-        )}`
+        `/booking-success?type=promo&title=${encodeURIComponent(
+          title || "Promo",
+        )}`,
       );
     } catch (err) {
       console.error("Upload failed:", err);

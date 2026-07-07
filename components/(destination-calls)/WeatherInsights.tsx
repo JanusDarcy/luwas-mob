@@ -8,8 +8,8 @@ import {
 } from "react-native";
 
 interface WeatherData {
-  bestTime: { label: string; reason: string; emoji: string }[];
-  weatherInfo: { label: string; months: string; temperature: string }[];
+  bestTime?: { label: string; reason: string; emoji: string }[];
+  weatherInfo?: { label: string; months: string; temperature: string }[];
 }
 
 const API_BASE = "https://luwas-travel-app.vercel.app";
@@ -40,12 +40,19 @@ export default function WeatherInsights({
   if (!weather)
     return <Text style={styles.placeholder}>No weather info available.</Text>;
 
+  const bestTime = weather.bestTime ?? [];
+  const weatherInfo = weather.weatherInfo ?? [];
+
+  if (bestTime.length === 0 && weatherInfo.length === 0) {
+    return <Text style={styles.placeholder}>No weather info available.</Text>;
+  }
+
   return (
     <View>
       <Text style={styles.sectionTitle}>Weather Insights</Text>
 
       {/* Best Time to Visit */}
-      {weather.bestTime.map((t, i) => (
+      {bestTime.map((t, i) => (
         <View key={i} style={styles.card}>
           <Text style={styles.emoji}>{t.emoji}</Text>
           <View style={{ flex: 1 }}>
@@ -56,7 +63,7 @@ export default function WeatherInsights({
       ))}
 
       {/* General Weather Info */}
-      {weather.weatherInfo.map((w, i) => (
+      {weatherInfo.map((w, i) => (
         <View key={i} style={styles.card}>
           <Ionicons name="cloud-outline" size={20} color="#2563EB" />
           <View style={{ marginLeft: 10 }}>

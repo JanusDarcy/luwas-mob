@@ -1,25 +1,25 @@
 // app/(itineraries)/[id]/book.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { getAuth } from "firebase/auth";
+import { getAuth, onAuthStateChanged, User } from "firebase/auth";
 import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  serverTimestamp,
+    addDoc,
+    collection,
+    doc,
+    getDoc,
+    serverTimestamp,
 } from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  ImageBackground,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    ImageBackground,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { db } from "../../../src/lib/firebase";
@@ -35,7 +35,7 @@ export default function ItineraryBookingForm() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const auth = getAuth();
-  const user = auth.currentUser;
+  const [user, setUser] = useState<User | null>(null);
 
   const [itinerary, setItinerary] = useState<Itinerary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -53,16 +53,21 @@ export default function ItineraryBookingForm() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showSpecialRequests, setShowSpecialRequests] = useState(false);
 
-  // Prefill user info
   useEffect(() => {
-    if (user) {
-      setFormData((prev) => ({
-        ...prev,
-        name: user.displayName || "",
-        email: user.email || "",
-      }));
-    }
-  }, [user]);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+
+      if (currentUser) {
+        setFormData((prev) => ({
+          ...prev,
+          name: prev.name || currentUser.displayName || "",
+          email: prev.email || currentUser.email || "",
+        }));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [auth]);
 
   // Fetch itinerary details
   useEffect(() => {
@@ -97,52 +102,55 @@ export default function ItineraryBookingForm() {
     }));
   };
 
-const handleSubmit = async () => {
-  if (!itinerary) return;
+  const handleSubmit = async () => {
+    if (!itinerary) return;
 
-  if (!formData.departureDate) {
-    Alert.alert("Error", "Please select a departure date.");
-    return;
-  }
+    if (!formData.departureDate) {
+      Alert.alert("Error", "Please select a departure date.");
+      return;
+    }
 
-  setLoading(true);
-  try {
-    // 🧮 Compute pricing
-    const price = itinerary.price || 0;
-    const totalPrice = formData.travelers * price;
+    setLoading(true);
+    try {
+      // 🧮 Compute pricing
+      const price = itinerary.price || 0;
+      const totalPrice = formData.travelers * price;
 
-    // ✅ Unified booking structure (same as web)
-    const bookingData = {
-      ...formData,
-      userId: user?.uid,
-      itineraryId: id,
-      itineraryTitle: itinerary.title,
-      price, // 💰 per traveler
-      totalPrice, // 💰 total
-      status: "pending_payment",
-      createdAt: serverTimestamp(),
-    };
+      // ✅ Unified booking structure (same as web)
+      const bookingData = {
+        ...formData,
+        userId: user?.uid,
+        itineraryId: id,
+        itineraryTitle: itinerary.title,
+        price, // 💰 per traveler
+        totalPrice, // 💰 total
+        status: "pending_payment",
+        createdAt: serverTimestamp(),
+      };
 
-    // ✅ Save to Firestore
-    const docRef = await addDoc(collection(db, "itineraryBookings"), bookingData);
+      // ✅ Save to Firestore
+      const docRef = await addDoc(
+        collection(db, "itineraryBookings"),
+        bookingData,
+      );
 
-    Alert.alert(
-      "Success",
-      `Booking created! Total: ₱${totalPrice.toLocaleString()}\nRedirecting to payment...`
-    );
+      Alert.alert(
+        "Success",
+        `Booking created! Total: ₱${totalPrice.toLocaleString()}\nRedirecting to payment...`,
+      );
 
-    router.push(
-      `/(itineraries)/${id}/pay?bookingId=${docRef.id}&title=${encodeURIComponent(
-        itinerary.title
-      )}&type=itinerary&amount=${totalPrice}`
-    );
-  } catch (err) {
-    console.error("Booking error:", err);
-    Alert.alert("Error", "Something went wrong while booking.");
-  } finally {
-    setLoading(false);
-  }
-};
+      router.push(
+        `/(itineraries)/${id}/pay?bookingId=${docRef.id}&title=${encodeURIComponent(
+          itinerary.title,
+        )}&type=itinerary&amount=${totalPrice}`,
+      );
+    } catch (err) {
+      console.error("Booking error:", err);
+      Alert.alert("Error", "Something went wrong while booking.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!itinerary) {
     return (
@@ -171,7 +179,10 @@ const handleSubmit = async () => {
           }}
         >
           <View style={styles.heroOverlay} />
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.back()}
+          >
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
           <View style={styles.heroTextBox}>
@@ -349,7 +360,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   form: { padding: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: "700", color: "#111", marginBottom: 4 },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111",
+    marginBottom: 4,
+  },
   sectionSubtitle: { fontSize: 13, color: "#666", marginBottom: 16 },
   inputWrapper: {
     flexDirection: "row",

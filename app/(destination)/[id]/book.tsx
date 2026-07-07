@@ -1,18 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { getAuth } from "firebase/auth";
-import { addDoc, collection, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { getAuth, onAuthStateChanged, User } from "firebase/auth";
+import {
+    addDoc,
+    collection,
+    doc,
+    getDoc,
+    serverTimestamp,
+} from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  ImageBackground,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    ImageBackground,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import DateTimePickerModal from "react-native-modal-datetime-picker";
 import { db } from "../../../src/lib/firebase";
@@ -26,10 +33,24 @@ interface Destination {
 }
 
 export default function BookingForm() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const {
+    id,
+    tripType,
+    packageId,
+    price: priceParam,
+    totalPrice: totalParam,
+    title: titleParam,
+  } = useLocalSearchParams<{
+    id: string;
+    tripType?: string;
+    packageId?: string;
+    price?: string;
+    totalPrice?: string;
+    title?: string;
+  }>();
   const router = useRouter();
   const auth = getAuth();
-  const user = auth.currentUser;
+  const [user, setUser] = useState<User | null>(null);
 
   const [destination, setDestination] = useState<Destination | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,22 +66,29 @@ export default function BookingForm() {
     specialRequests: "",
   });
 
-  const [showDatePicker, setShowDatePicker] = useState<{ type: "departure" | "return" | null }>({
+  const [showDatePicker, setShowDatePicker] = useState<{
+    type: "departure" | "return" | null;
+  }>({
     type: null,
   });
 
   const [showSpecialRequests, setShowSpecialRequests] = useState(false);
 
-  // Prefill user info
   useEffect(() => {
-    if (user) {
-      setFormData((prev) => ({
-        ...prev,
-        fullName: user.displayName || "",
-        email: user.email || "",
-      }));
-    }
-  }, [user]);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+
+      if (currentUser) {
+        setFormData((prev) => ({
+          ...prev,
+          fullName: prev.fullName || currentUser.displayName || "",
+          email: prev.email || currentUser.email || "",
+        }));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [auth]);
 
   // Fetch destination details
   useEffect(() => {
@@ -99,43 +127,56 @@ export default function BookingForm() {
     }));
   };
 
-const handleSubmit = async () => {
-  if (!destination) return;
-  setLoading(true);
+  const handleSubmit = async () => {
+    if (!destination) return;
+    setLoading(true);
 
-  try {
-    // 🧮 Compute pricing
-    const price = destination.price || 0;
-    const totalPrice = formData.travelers * price;
+    try {
+      const pricePerPerson = priceParam
+        ? Number(priceParam)
+        : destination.price || 0;
+      const totalPrice = totalParam
+        ? Number(totalParam)
+        : formData.travelers * pricePerPerson;
+      const bookingTripType = tripType || "destination";
 
-    // ✅ Unified booking data (same as web)
-    const bookingData = {
-      ...formData,
-      userId: user?.uid,
-      destinationId: id,
-      destination: destination.name,
-      price, // 💰 per traveler
-      totalPrice, // 💰 total
-      status: "pending_payment",
-      createdAt: serverTimestamp(),
-    };
+      let chosenActivities;
+      if (bookingTripType === "custom") {
+        const stored = await AsyncStorage.getItem(`customItinerary_${id}`);
+        if (stored) chosenActivities = JSON.parse(stored).chosenActivities;
+      }
 
-    // ✅ Write to Firestore (same structure as web)
-    const docRef = await addDoc(collection(db, "bookings"), bookingData);
+      const bookingData: Record<string, unknown> = {
+        ...formData,
+        userId: user?.uid,
+        destinationId: id,
+        destination: destination.name,
+        tripType: bookingTripType,
+        price: pricePerPerson,
+        totalPrice,
+        status: "pending_payment",
+        createdAt: serverTimestamp(),
+      };
+      if (packageId) bookingData.packageId = packageId;
+      if (chosenActivities) bookingData.chosenActivities = chosenActivities;
+      if (titleParam && bookingTripType === "package")
+        bookingData.packageTitle = titleParam;
 
-    Alert.alert("Success", "Booking created! Redirecting to payment...");
-    router.push(
-      `/${id}/pay?bookingId=${docRef.id}&title=${encodeURIComponent(
-        destination.name
-      )}&type=destination&amount=${totalPrice}`
-    );
-  } catch (err) {
-    console.error("Booking error:", err);
-    Alert.alert("Error", "Something went wrong while booking.");
-  } finally {
-    setLoading(false);
-  }
-};
+      const docRef = await addDoc(collection(db, "bookings"), bookingData);
+
+      Alert.alert("Success", "Booking created! Redirecting to payment...");
+      router.push(
+        `/${id}/pay?bookingId=${docRef.id}&title=${encodeURIComponent(
+          titleParam || destination.name,
+        )}&type=${bookingTripType}&amount=${totalPrice}`,
+      );
+    } catch (err) {
+      console.error("Booking error:", err);
+      Alert.alert("Error", "Something went wrong while booking.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!destination) {
     return (
@@ -145,7 +186,13 @@ const handleSubmit = async () => {
     );
   }
 
-  const totalPrice = formData.travelers * (destination.price || 0);
+  const pricePerPerson = priceParam
+    ? Number(priceParam)
+    : destination.price || 0;
+  const totalPrice = totalParam
+    ? Number(totalParam)
+    : formData.travelers * pricePerPerson;
+  const displayTitle = titleParam || destination.name;
 
   return (
     <View style={{ flex: 1, backgroundColor: "#fff" }}>
@@ -158,25 +205,35 @@ const handleSubmit = async () => {
         <ImageBackground
           source={{ uri: destination.imageUrl }}
           style={styles.heroImage}
-          imageStyle={{ borderBottomLeftRadius: 24, borderBottomRightRadius: 24 }}
+          imageStyle={{
+            borderBottomLeftRadius: 24,
+            borderBottomRightRadius: 24,
+          }}
         >
           {/* Dark overlay */}
           <View style={styles.heroOverlay} />
 
           {/* Back button */}
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.back()}
+          >
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
 
           {/* Title + Price */}
           <View style={styles.heroTextBox}>
-            <Text style={styles.heroTitle}>{destination.name}</Text>
-            <Text style={styles.heroPrice}>₱{destination.price.toLocaleString()}</Text>
+            <Text style={styles.heroTitle}>{displayTitle}</Text>
+            <Text style={styles.heroPrice}>
+              ₱{pricePerPerson.toLocaleString()}
+            </Text>
           </View>
         </ImageBackground>
 
         {/* Step Indicator */}
-        <Text style={styles.stepIndicator}>Step 1 of 2: Traveler Information</Text>
+        <Text style={styles.stepIndicator}>
+          Step 1 of 2: Traveler Information
+        </Text>
 
         {/* Traveler Info Form */}
         <View style={styles.form}>
@@ -225,7 +282,9 @@ const handleSubmit = async () => {
               style={styles.input}
               placeholder="Local Address"
               value={formData.localAddress}
-              onChangeText={(v) => setFormData({ ...formData, localAddress: v })}
+              onChangeText={(v) =>
+                setFormData({ ...formData, localAddress: v })
+              }
             />
           </View>
 
@@ -262,11 +321,17 @@ const handleSubmit = async () => {
           {/* Travelers Stepper */}
           <Text style={styles.label}>Travelers</Text>
           <View style={styles.stepper}>
-            <TouchableOpacity style={styles.stepBtn} onPress={() => handleTravelerChange(-1)}>
+            <TouchableOpacity
+              style={styles.stepBtn}
+              onPress={() => handleTravelerChange(-1)}
+            >
               <Text style={styles.stepText}>-</Text>
             </TouchableOpacity>
             <Text style={styles.travelerCount}>{formData.travelers}</Text>
-            <TouchableOpacity style={styles.stepBtn} onPress={() => handleTravelerChange(1)}>
+            <TouchableOpacity
+              style={styles.stepBtn}
+              onPress={() => handleTravelerChange(1)}
+            >
               <Text style={styles.stepText}>+</Text>
             </TouchableOpacity>
           </View>
@@ -276,26 +341,37 @@ const handleSubmit = async () => {
             <Ionicons name="cash-outline" size={20} color="#2563EB" />
             <View style={{ marginLeft: 8 }}>
               <Text style={styles.priceText}>
-                Price per traveler: ₱{destination.price.toLocaleString()}
+                Price per traveler: ₱{pricePerPerson.toLocaleString()}
               </Text>
-              <Text style={styles.totalPrice}>Total: ₱{totalPrice.toLocaleString()}</Text>
+              <Text style={styles.totalPrice}>
+                Total: ₱{totalPrice.toLocaleString()}
+              </Text>
             </View>
           </View>
 
           {/* Special Requests */}
-          <TouchableOpacity onPress={() => setShowSpecialRequests(!showSpecialRequests)}>
+          <TouchableOpacity
+            onPress={() => setShowSpecialRequests(!showSpecialRequests)}
+          >
             <Text style={styles.toggleSpecial}>
-              {showSpecialRequests ? "Hide Special Requests" : "+ Add Special Requests"}
+              {showSpecialRequests
+                ? "Hide Special Requests"
+                : "+ Add Special Requests"}
             </Text>
           </TouchableOpacity>
 
           {showSpecialRequests && (
             <TextInput
-              style={[styles.input, { height: 80, textAlignVertical: "top", marginTop: 8 }]}
+              style={[
+                styles.input,
+                { height: 80, textAlignVertical: "top", marginTop: 8 },
+              ]}
               placeholder="Special Requests (optional)"
               multiline
               value={formData.specialRequests}
-              onChangeText={(v) => setFormData({ ...formData, specialRequests: v })}
+              onChangeText={(v) =>
+                setFormData({ ...formData, specialRequests: v })
+              }
             />
           )}
         </View>
@@ -303,7 +379,11 @@ const handleSubmit = async () => {
 
       {/* Sticky Confirm Button */}
       <View style={styles.stickyButtonWrapper}>
-        <TouchableOpacity style={styles.button} onPress={handleSubmit} disabled={loading}>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleSubmit}
+          disabled={loading}
+        >
           <Text style={styles.buttonText}>
             {loading ? "Processing..." : "Confirm Booking"}
           </Text>
@@ -321,9 +401,20 @@ const styles = StyleSheet.create({
   heroTextBox: { paddingHorizontal: 20, paddingBottom: 24 },
   heroTitle: { fontSize: 22, fontWeight: "700", color: "#fff" },
   heroPrice: { fontSize: 16, color: "#fcd34d", marginTop: 2 },
-  stepIndicator: { marginTop: 16, textAlign: "center", color: "#666", fontSize: 13, marginBottom: 4 },
+  stepIndicator: {
+    marginTop: 16,
+    textAlign: "center",
+    color: "#666",
+    fontSize: 13,
+    marginBottom: 4,
+  },
   form: { padding: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: "700", color: "#111", marginBottom: 4 },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111",
+    marginBottom: 4,
+  },
   sectionSubtitle: { fontSize: 13, color: "#666", marginBottom: 16 },
   inputWrapper: {
     flexDirection: "row",
@@ -337,8 +428,21 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, padding: 10, fontSize: 14, color: "#111" },
   label: { fontSize: 14, fontWeight: "600", marginTop: 8, marginBottom: 6 },
-  stepper: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 12, marginTop: 4 },
-  stepBtn: { width: 40, height: 40, backgroundColor: "#EFF6FF", borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  stepper: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  stepBtn: {
+    width: 40,
+    height: 40,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   stepText: { fontSize: 20, fontWeight: "700", color: "#2563EB" },
   travelerCount: { marginHorizontal: 16, fontSize: 16, fontWeight: "700" },
   priceBox: {
@@ -352,11 +456,43 @@ const styles = StyleSheet.create({
   },
   priceText: { fontSize: 14, color: "#2563EB" },
   totalPrice: { fontSize: 16, fontWeight: "700", color: "#1E40AF" },
-  toggleSpecial: { fontSize: 14, fontWeight: "600", color: "#2563EB", marginTop: 8 },
-  stickyButtonWrapper: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: "#fff", padding: 16, borderTopWidth: 1, borderColor: "#eee" },
-  button: { backgroundColor: "#2563EB", borderRadius: 999, alignItems: "center", paddingVertical: 16, marginBottom: 4 },
+  toggleSpecial: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#2563EB",
+    marginTop: 8,
+  },
+  stickyButtonWrapper: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "#fff",
+    padding: 16,
+    borderTopWidth: 1,
+    borderColor: "#eee",
+  },
+  button: {
+    backgroundColor: "#2563EB",
+    borderRadius: 999,
+    alignItems: "center",
+    paddingVertical: 16,
+    marginBottom: 4,
+  },
   buttonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
   note: { fontSize: 12, color: "#888", textAlign: "center" },
-  heroOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)", borderBottomLeftRadius: 24, borderBottomRightRadius: 24 },
-  backBtn: { position: "absolute", top: 50, left: 20, backgroundColor: "rgba(0,0,0,0.4)", padding: 8, borderRadius: 20 },
+  heroOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+  backBtn: {
+    position: "absolute",
+    top: 50,
+    left: 20,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    padding: 8,
+    borderRadius: 20,
+  },
 });
